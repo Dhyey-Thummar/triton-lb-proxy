@@ -1,0 +1,31 @@
+# Go binaries
+/bin/
+/bin/*
+
+# Go build cache
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go modules
+/go.sum
+/go.mod
+
+# VSCode
+.vscode/
+.vscode-server/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*.DS_Store
+
+# Model files (optional: large files)
+model_repository/

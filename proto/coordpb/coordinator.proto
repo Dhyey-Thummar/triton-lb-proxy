@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package coordpb;
+
+option go_package = "triton-lb-proxy/proto/coordpb";
+
+// Messages for proxy control (coordinator -> proxy)
+message ModeRequest {
+  string mode = 1; // "ACTIVE" or "IDLE"
+  string coordinator_id = 2;
+}
+message ModeResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+// Messages for proxy -> coordinator notifications
+message NotifyRequest {
+  string server_id = 1;
+  string desire = 2; // "WANT_ACTIVE" or "WANT_IDLE" or "ACTIVE" or "IDLE"
+  double cpu_util = 3;
+  int64 queue_len = 4;
+}
+message NotifyResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+// Service implemented by each proxy so coordinator can call SetMode
+service ProxyControl {
+  rpc SetMode(ModeRequest) returns (ModeResponse);
+}
+
+// Service implemented by the coordinator so proxies can send notifications
+service Coordinator {
+  rpc NotifyState(NotifyRequest) returns (NotifyResponse);
+}
