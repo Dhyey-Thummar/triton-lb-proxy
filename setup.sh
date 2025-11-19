@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+echo "=== Installing Protobuf Compiler ==="
+
+sudo apt-get update
+sudo apt-get install -y protobuf-compiler
+
 echo "=== Installing Go ==="
 
 # Detect OS and install Go if not present
@@ -19,19 +24,23 @@ if ! command -v go &> /dev/null; then
     sudo rm -rf /usr/local/go
     sudo tar -C /usr/local -xzf go${GO_VERSION}.${OS}-${ARCH}.tar.gz
     rm go${GO_VERSION}.${OS}-${ARCH}.tar.gz
-    export PATH=$PATH:/usr/local/go/bin
-
+    echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.profile
+    echo "export PATH=$PATH:$HOME/go/bin" >> ~/.profile
+    source ~/.profile
+else
     echo "Go is already installed"
 fi
 
 echo "=== Setting up Go modules ==="
+go mod edit -module=triton-lb-proxy
 go mod tidy
+
+sudo apt-get update
+sudo apt-get install -y protobuf-compiler
 
 echo "=== Installing protoc Go plugins ==="
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-
-export PATH=$PATH:$(go env GOPATH)/bin
 
 echo "=== Generating protobuf files ==="
 cd proto

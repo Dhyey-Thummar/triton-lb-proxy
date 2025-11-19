@@ -13,7 +13,6 @@
 
 # Go modules
 /go.sum
-/go.mod
 
 # VSCode
 .vscode/
