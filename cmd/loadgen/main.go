@@ -13,11 +13,64 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"net"
 
 	pb "triton-lb-proxy/proto"
+	coordpb "triton-lb-proxy/proto/coordpb"
 
 	"google.golang.org/grpc"
 )
+
+type LoadgenState struct {
+    allServers    []string
+    activeIndices atomic.Value // stores []int
+    rrCounter     uint64
+}
+
+func NewLoadgenState(servers []string) *LoadgenState {
+    st := &LoadgenState{allServers: servers}
+    st.activeIndices.Store([]int{}) // initially none
+    return st
+}
+
+func (st *LoadgenState) NextServer() string {
+    active := st.activeIndices.Load().([]int)
+    if len(active) == 0 {
+        // no active servers -> fallback to all servers
+        n := atomic.AddUint64(&st.rrCounter, 1)
+        return st.allServers[(n-1)%uint64(len(st.allServers))]
+    }
+    n := atomic.AddUint64(&st.rrCounter, 1)
+    idx := active[(n-1)%uint64(len(active))]
+    return st.allServers[idx]
+}
+
+type LoadgenControlServer struct {
+    state *LoadgenState
+    coordpb.UnimplementedLoadgenControlServer
+}
+
+func (s *LoadgenControlServer) UpdateActiveServers(
+    ctx context.Context,
+    req *coordpb.UpdateActiveServersRequest,
+) (*coordpb.UpdateActiveServersResponse, error) {
+
+    // Convert to []int
+    inds := make([]int, len(req.ServerIndices))
+    for i, v := range req.ServerIndices {
+        inds[i] = int(v)
+    }
+
+    s.state.activeIndices.Store(inds)
+
+    log.Printf("[LOADGEN] updated active servers: %v", inds)
+
+    return &coordpb.UpdateActiveServersResponse{
+        Ok:      true,
+        Message: "active server list updated",
+    }, nil
+}
+
 
 //
 // ───────────────────────── Input Tensor ─────────────────────────
@@ -41,26 +94,25 @@ func makeRandomImage(batch int) [][]byte {
 //
 
 type ServerPool struct {
-	clients []pb.GRPCInferenceServiceClient
-	counter uint64
+    clients map[string]pb.GRPCInferenceServiceClient
 }
 
 func newServerPool(urls []string) *ServerPool {
-	clients := make([]pb.GRPCInferenceServiceClient, 0, len(urls))
-	for _, u := range urls {
-		conn, err := grpc.Dial(u, grpc.WithInsecure())
-		if err != nil {
-			log.Fatalf("failed dial: %v", err)
-		}
-		clients = append(clients, pb.NewGRPCInferenceServiceClient(conn))
-	}
-	return &ServerPool{clients: clients}
+    m := make(map[string]pb.GRPCInferenceServiceClient)
+    for _, u := range urls {
+        conn, err := grpc.Dial(u, grpc.WithInsecure())
+        if err != nil {
+            log.Fatalf("dial failed: %v", u)
+        }
+        m[u] = pb.NewGRPCInferenceServiceClient(conn)
+    }
+    return &ServerPool{clients: m}
 }
 
-func (sp *ServerPool) nextClient() pb.GRPCInferenceServiceClient {
-	n := atomic.AddUint64(&sp.counter, 1)
-	return sp.clients[(n-1)%uint64(len(sp.clients))]
+func (sp *ServerPool) ClientFor(addr string) pb.GRPCInferenceServiceClient {
+    return sp.clients[addr]
 }
+
 
 //
 // ───────────────────────── Worker Pool ─────────────────────────
@@ -74,9 +126,10 @@ type WorkerPool struct {
 	input   [][]byte
 	latCh   chan time.Duration
 	wg      sync.WaitGroup
+	state   *LoadgenState
 }
 
-func newWorkerPool(n int, sp *ServerPool, model, version string, batch int, input [][]byte, latCh chan time.Duration) *WorkerPool {
+func newWorkerPool(n int, sp *ServerPool, model, version string, batch int, input [][]byte, latCh chan time.Duration, state *LoadgenState) *WorkerPool {
 	wp := &WorkerPool{
 		pool:    sp,
 		model:   model,
@@ -84,6 +137,7 @@ func newWorkerPool(n int, sp *ServerPool, model, version string, batch int, inpu
 		batch:   batch,
 		input:   input,
 		latCh:   latCh,
+		state:   state,
 	}
 
 	wp.wg.Add(n)
@@ -96,7 +150,9 @@ func newWorkerPool(n int, sp *ServerPool, model, version string, batch int, inpu
 func (wp *WorkerPool) worker() {
 	defer wp.wg.Done()
 	for range requestQueue {
-		client := wp.pool.nextClient()
+		serverAddr := wp.state.NextServer()
+		client := wp.pool.ClientFor(serverAddr)
+
 
 		req := &pb.ModelInferRequest{
 			ModelName:    wp.model,
@@ -275,7 +331,12 @@ func main() {
 	go logLatency(latCh)
 
 	// 4. worker pool
-	wp := newWorkerPool(*workers, sp, *model, *version, *batch, input, latCh)
+	state := NewLoadgenState(urls)
+	lis, _ := net.Listen("tcp", ":9050")
+	grpcServer := grpc.NewServer()
+	coordpb.RegisterLoadgenControlServer(grpcServer, &LoadgenControlServer{state: state, UnimplementedLoadgenControlServer: coordpb.UnimplementedLoadgenControlServer{}})
+	go grpcServer.Serve(lis)
+	wp := newWorkerPool(*workers, sp, *model, *version, *batch, input, latCh, state)
 
 	// 5. run orchestrator
 	log.Printf("Loadgen → dist=%s rps=%.2f workers=%d servers=%d", *arrival, *rps, *workers, len(urls))

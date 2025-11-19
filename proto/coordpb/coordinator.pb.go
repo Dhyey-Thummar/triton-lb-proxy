@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        v3.11.4
-// source: coordpb/coordinator.proto
+// source: proto/coordpb/coordinator.proto
 
 package coordpb
 
@@ -32,7 +32,7 @@ type ModeRequest struct {
 
 func (x *ModeRequest) Reset() {
 	*x = ModeRequest{}
-	mi := &file_coordpb_coordinator_proto_msgTypes[0]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +44,7 @@ func (x *ModeRequest) String() string {
 func (*ModeRequest) ProtoMessage() {}
 
 func (x *ModeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_coordpb_coordinator_proto_msgTypes[0]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -57,7 +57,7 @@ func (x *ModeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModeRequest.ProtoReflect.Descriptor instead.
 func (*ModeRequest) Descriptor() ([]byte, []int) {
-	return file_coordpb_coordinator_proto_rawDescGZIP(), []int{0}
+	return file_proto_coordpb_coordinator_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *ModeRequest) GetMode() string {
@@ -84,7 +84,7 @@ type ModeResponse struct {
 
 func (x *ModeResponse) Reset() {
 	*x = ModeResponse{}
-	mi := &file_coordpb_coordinator_proto_msgTypes[1]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -96,7 +96,7 @@ func (x *ModeResponse) String() string {
 func (*ModeResponse) ProtoMessage() {}
 
 func (x *ModeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_coordpb_coordinator_proto_msgTypes[1]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -109,7 +109,7 @@ func (x *ModeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModeResponse.ProtoReflect.Descriptor instead.
 func (*ModeResponse) Descriptor() ([]byte, []int) {
-	return file_coordpb_coordinator_proto_rawDescGZIP(), []int{1}
+	return file_proto_coordpb_coordinator_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ModeResponse) GetOk() bool {
@@ -139,7 +139,7 @@ type NotifyRequest struct {
 
 func (x *NotifyRequest) Reset() {
 	*x = NotifyRequest{}
-	mi := &file_coordpb_coordinator_proto_msgTypes[2]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -151,7 +151,7 @@ func (x *NotifyRequest) String() string {
 func (*NotifyRequest) ProtoMessage() {}
 
 func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_coordpb_coordinator_proto_msgTypes[2]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -164,7 +164,7 @@ func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyRequest.ProtoReflect.Descriptor instead.
 func (*NotifyRequest) Descriptor() ([]byte, []int) {
-	return file_coordpb_coordinator_proto_rawDescGZIP(), []int{2}
+	return file_proto_coordpb_coordinator_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *NotifyRequest) GetServerId() string {
@@ -205,7 +205,7 @@ type NotifyResponse struct {
 
 func (x *NotifyResponse) Reset() {
 	*x = NotifyResponse{}
-	mi := &file_coordpb_coordinator_proto_msgTypes[3]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -217,7 +217,7 @@ func (x *NotifyResponse) String() string {
 func (*NotifyResponse) ProtoMessage() {}
 
 func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_coordpb_coordinator_proto_msgTypes[3]
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -230,7 +230,7 @@ func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyResponse.ProtoReflect.Descriptor instead.
 func (*NotifyResponse) Descriptor() ([]byte, []int) {
-	return file_coordpb_coordinator_proto_rawDescGZIP(), []int{3}
+	return file_proto_coordpb_coordinator_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *NotifyResponse) GetOk() bool {
@@ -247,11 +247,108 @@ func (x *NotifyResponse) GetMessage() string {
 	return ""
 }
 
-var File_coordpb_coordinator_proto protoreflect.FileDescriptor
+// Coordinator → Loadgen (pushes active server set)
+type UpdateActiveServersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServerIndices []int32                `protobuf:"varint,1,rep,packed,name=server_indices,json=serverIndices,proto3" json:"server_indices,omitempty"` // indices into the client's full server list
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
 
-const file_coordpb_coordinator_proto_rawDesc = "" +
+func (x *UpdateActiveServersRequest) Reset() {
+	*x = UpdateActiveServersRequest{}
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateActiveServersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateActiveServersRequest) ProtoMessage() {}
+
+func (x *UpdateActiveServersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateActiveServersRequest.ProtoReflect.Descriptor instead.
+func (*UpdateActiveServersRequest) Descriptor() ([]byte, []int) {
+	return file_proto_coordpb_coordinator_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *UpdateActiveServersRequest) GetServerIndices() []int32 {
+	if x != nil {
+		return x.ServerIndices
+	}
+	return nil
+}
+
+type UpdateActiveServersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateActiveServersResponse) Reset() {
+	*x = UpdateActiveServersResponse{}
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateActiveServersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateActiveServersResponse) ProtoMessage() {}
+
+func (x *UpdateActiveServersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_coordpb_coordinator_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateActiveServersResponse.ProtoReflect.Descriptor instead.
+func (*UpdateActiveServersResponse) Descriptor() ([]byte, []int) {
+	return file_proto_coordpb_coordinator_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *UpdateActiveServersResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *UpdateActiveServersResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+var File_proto_coordpb_coordinator_proto protoreflect.FileDescriptor
+
+const file_proto_coordpb_coordinator_proto_rawDesc = "" +
 	"\n" +
-	"\x19coordpb/coordinator.proto\x12\acoordpb\"H\n" +
+	"\x1fproto/coordpb/coordinator.proto\x12\acoordpb\"H\n" +
 	"\vModeRequest\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12%\n" +
 	"\x0ecoordinator_id\x18\x02 \x01(\tR\rcoordinatorId\"8\n" +
@@ -265,63 +362,74 @@ const file_coordpb_coordinator_proto_rawDesc = "" +
 	"\tqueue_len\x18\x04 \x01(\x03R\bqueueLen\":\n" +
 	"\x0eNotifyResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2F\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"C\n" +
+	"\x1aUpdateActiveServersRequest\x12%\n" +
+	"\x0eserver_indices\x18\x01 \x03(\x05R\rserverIndices\"G\n" +
+	"\x1bUpdateActiveServersResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2r\n" +
+	"\x0eLoadgenControl\x12`\n" +
+	"\x13UpdateActiveServers\x12#.coordpb.UpdateActiveServersRequest\x1a$.coordpb.UpdateActiveServersResponse2F\n" +
 	"\fProxyControl\x126\n" +
 	"\aSetMode\x12\x14.coordpb.ModeRequest\x1a\x15.coordpb.ModeResponse2M\n" +
 	"\vCoordinator\x12>\n" +
 	"\vNotifyState\x12\x16.coordpb.NotifyRequest\x1a\x17.coordpb.NotifyResponseB\x1fZ\x1dtriton-lb-proxy/proto/coordpbb\x06proto3"
 
 var (
-	file_coordpb_coordinator_proto_rawDescOnce sync.Once
-	file_coordpb_coordinator_proto_rawDescData []byte
+	file_proto_coordpb_coordinator_proto_rawDescOnce sync.Once
+	file_proto_coordpb_coordinator_proto_rawDescData []byte
 )
 
-func file_coordpb_coordinator_proto_rawDescGZIP() []byte {
-	file_coordpb_coordinator_proto_rawDescOnce.Do(func() {
-		file_coordpb_coordinator_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_coordpb_coordinator_proto_rawDesc), len(file_coordpb_coordinator_proto_rawDesc)))
+func file_proto_coordpb_coordinator_proto_rawDescGZIP() []byte {
+	file_proto_coordpb_coordinator_proto_rawDescOnce.Do(func() {
+		file_proto_coordpb_coordinator_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_coordpb_coordinator_proto_rawDesc), len(file_proto_coordpb_coordinator_proto_rawDesc)))
 	})
-	return file_coordpb_coordinator_proto_rawDescData
+	return file_proto_coordpb_coordinator_proto_rawDescData
 }
 
-var file_coordpb_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
-var file_coordpb_coordinator_proto_goTypes = []any{
-	(*ModeRequest)(nil),    // 0: coordpb.ModeRequest
-	(*ModeResponse)(nil),   // 1: coordpb.ModeResponse
-	(*NotifyRequest)(nil),  // 2: coordpb.NotifyRequest
-	(*NotifyResponse)(nil), // 3: coordpb.NotifyResponse
+var file_proto_coordpb_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_proto_coordpb_coordinator_proto_goTypes = []any{
+	(*ModeRequest)(nil),                 // 0: coordpb.ModeRequest
+	(*ModeResponse)(nil),                // 1: coordpb.ModeResponse
+	(*NotifyRequest)(nil),               // 2: coordpb.NotifyRequest
+	(*NotifyResponse)(nil),              // 3: coordpb.NotifyResponse
+	(*UpdateActiveServersRequest)(nil),  // 4: coordpb.UpdateActiveServersRequest
+	(*UpdateActiveServersResponse)(nil), // 5: coordpb.UpdateActiveServersResponse
 }
-var file_coordpb_coordinator_proto_depIdxs = []int32{
-	0, // 0: coordpb.ProxyControl.SetMode:input_type -> coordpb.ModeRequest
-	2, // 1: coordpb.Coordinator.NotifyState:input_type -> coordpb.NotifyRequest
-	1, // 2: coordpb.ProxyControl.SetMode:output_type -> coordpb.ModeResponse
-	3, // 3: coordpb.Coordinator.NotifyState:output_type -> coordpb.NotifyResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
+var file_proto_coordpb_coordinator_proto_depIdxs = []int32{
+	4, // 0: coordpb.LoadgenControl.UpdateActiveServers:input_type -> coordpb.UpdateActiveServersRequest
+	0, // 1: coordpb.ProxyControl.SetMode:input_type -> coordpb.ModeRequest
+	2, // 2: coordpb.Coordinator.NotifyState:input_type -> coordpb.NotifyRequest
+	5, // 3: coordpb.LoadgenControl.UpdateActiveServers:output_type -> coordpb.UpdateActiveServersResponse
+	1, // 4: coordpb.ProxyControl.SetMode:output_type -> coordpb.ModeResponse
+	3, // 5: coordpb.Coordinator.NotifyState:output_type -> coordpb.NotifyResponse
+	3, // [3:6] is the sub-list for method output_type
+	0, // [0:3] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_coordpb_coordinator_proto_init() }
-func file_coordpb_coordinator_proto_init() {
-	if File_coordpb_coordinator_proto != nil {
+func init() { file_proto_coordpb_coordinator_proto_init() }
+func file_proto_coordpb_coordinator_proto_init() {
+	if File_proto_coordpb_coordinator_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_coordpb_coordinator_proto_rawDesc), len(file_coordpb_coordinator_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_coordpb_coordinator_proto_rawDesc), len(file_proto_coordpb_coordinator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
-		GoTypes:           file_coordpb_coordinator_proto_goTypes,
-		DependencyIndexes: file_coordpb_coordinator_proto_depIdxs,
-		MessageInfos:      file_coordpb_coordinator_proto_msgTypes,
+		GoTypes:           file_proto_coordpb_coordinator_proto_goTypes,
+		DependencyIndexes: file_proto_coordpb_coordinator_proto_depIdxs,
+		MessageInfos:      file_proto_coordpb_coordinator_proto_msgTypes,
 	}.Build()
-	File_coordpb_coordinator_proto = out.File
-	file_coordpb_coordinator_proto_goTypes = nil
-	file_coordpb_coordinator_proto_depIdxs = nil
+	File_proto_coordpb_coordinator_proto = out.File
+	file_proto_coordpb_coordinator_proto_goTypes = nil
+	file_proto_coordpb_coordinator_proto_depIdxs = nil
 }

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v3.11.4
-// source: coordpb/coordinator.proto
+// source: proto/coordpb/coordinator.proto
 
 package coordpb
 
@@ -17,6 +17,112 @@ import (
 // is compatible with the grpc package it is being compiled against.
 // Requires gRPC-Go v1.64.0 or later.
 const _ = grpc.SupportPackageIsVersion9
+
+const (
+	LoadgenControl_UpdateActiveServers_FullMethodName = "/coordpb.LoadgenControl/UpdateActiveServers"
+)
+
+// LoadgenControlClient is the client API for LoadgenControl service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Loadgen implemented service
+type LoadgenControlClient interface {
+	UpdateActiveServers(ctx context.Context, in *UpdateActiveServersRequest, opts ...grpc.CallOption) (*UpdateActiveServersResponse, error)
+}
+
+type loadgenControlClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewLoadgenControlClient(cc grpc.ClientConnInterface) LoadgenControlClient {
+	return &loadgenControlClient{cc}
+}
+
+func (c *loadgenControlClient) UpdateActiveServers(ctx context.Context, in *UpdateActiveServersRequest, opts ...grpc.CallOption) (*UpdateActiveServersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateActiveServersResponse)
+	err := c.cc.Invoke(ctx, LoadgenControl_UpdateActiveServers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// LoadgenControlServer is the server API for LoadgenControl service.
+// All implementations must embed UnimplementedLoadgenControlServer
+// for forward compatibility.
+//
+// Loadgen implemented service
+type LoadgenControlServer interface {
+	UpdateActiveServers(context.Context, *UpdateActiveServersRequest) (*UpdateActiveServersResponse, error)
+	mustEmbedUnimplementedLoadgenControlServer()
+}
+
+// UnimplementedLoadgenControlServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedLoadgenControlServer struct{}
+
+func (UnimplementedLoadgenControlServer) UpdateActiveServers(context.Context, *UpdateActiveServersRequest) (*UpdateActiveServersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateActiveServers not implemented")
+}
+func (UnimplementedLoadgenControlServer) mustEmbedUnimplementedLoadgenControlServer() {}
+func (UnimplementedLoadgenControlServer) testEmbeddedByValue()                        {}
+
+// UnsafeLoadgenControlServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to LoadgenControlServer will
+// result in compilation errors.
+type UnsafeLoadgenControlServer interface {
+	mustEmbedUnimplementedLoadgenControlServer()
+}
+
+func RegisterLoadgenControlServer(s grpc.ServiceRegistrar, srv LoadgenControlServer) {
+	// If the following call pancis, it indicates UnimplementedLoadgenControlServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&LoadgenControl_ServiceDesc, srv)
+}
+
+func _LoadgenControl_UpdateActiveServers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateActiveServersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LoadgenControlServer).UpdateActiveServers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LoadgenControl_UpdateActiveServers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LoadgenControlServer).UpdateActiveServers(ctx, req.(*UpdateActiveServersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// LoadgenControl_ServiceDesc is the grpc.ServiceDesc for LoadgenControl service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var LoadgenControl_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "coordpb.LoadgenControl",
+	HandlerType: (*LoadgenControlServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "UpdateActiveServers",
+			Handler:    _LoadgenControl_UpdateActiveServers_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "proto/coordpb/coordinator.proto",
+}
 
 const (
 	ProxyControl_SetMode_FullMethodName = "/coordpb.ProxyControl/SetMode"
@@ -121,7 +227,7 @@ var ProxyControl_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "coordpb/coordinator.proto",
+	Metadata: "proto/coordpb/coordinator.proto",
 }
 
 const (
@@ -227,5 +333,5 @@ var Coordinator_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "coordpb/coordinator.proto",
+	Metadata: "proto/coordpb/coordinator.proto",
 }

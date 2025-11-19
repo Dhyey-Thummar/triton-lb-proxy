@@ -26,6 +26,22 @@ message NotifyResponse {
   string message = 2;
 }
 
+// Coordinator → Loadgen (pushes active server set)
+message UpdateActiveServersRequest {
+  repeated int32 server_indices = 1; // indices into the client's full server list
+}
+
+message UpdateActiveServersResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+// Loadgen implemented service
+service LoadgenControl {
+  rpc UpdateActiveServers(UpdateActiveServersRequest)
+      returns (UpdateActiveServersResponse);
+}
+
 // Service implemented by each proxy so coordinator can call SetMode
 service ProxyControl {
   rpc SetMode(ModeRequest) returns (ModeResponse);

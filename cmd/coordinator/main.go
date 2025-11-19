@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
+	// "math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -22,6 +22,8 @@ type serverInfo struct {
 	lastDesire string
 	lastSeen  time.Time
 	cid       string
+	cpuUtil   float64
+	queueLen  int64
 }
 
 type CoordinatorServer struct {
@@ -32,6 +34,9 @@ type CoordinatorServer struct {
 
 	// clients to proxies so we can call SetMode
 	proxyClients map[string]coordpb.ProxyControlClient
+
+	loadgenAddr string
+	loadgenClient coordpb.LoadgenControlClient
 }
 
 func NewCoordinatorServer() *CoordinatorServer {
@@ -54,6 +59,8 @@ func (s *CoordinatorServer) NotifyState(ctx context.Context, req *coordpb.Notify
 	}
 	srv.lastDesire = req.Desire
 	srv.lastSeen = time.Now()
+	srv.cpuUtil = req.CpuUtil
+	srv.queueLen = req.QueueLen
 	log.Printf("[COORD] NotifyState from %s desire=%s cpu=%.2f qlen=%d", req.ServerId, req.Desire, req.CpuUtil, req.QueueLen)
 	return &coordpb.NotifyResponse{Ok: true, Message: "noted"}, nil
 }
@@ -84,8 +91,31 @@ func (s *CoordinatorServer) callSetMode(serverID, addr, mode string) {
 	}
 }
 
+func (s *CoordinatorServer) ensureLoadgenClient() {
+    if s.loadgenClient != nil {
+        return
+    }
+    if s.loadgenAddr == "" {
+        return
+    }
+
+    conn, err := grpc.Dial(
+        s.loadgenAddr,
+        grpc.WithTransportCredentials(insecure.NewCredentials()),
+        grpc.WithBlock(),
+        grpc.WithTimeout(2*time.Second),
+    )
+    if err != nil {
+        log.Printf("[COORD] loadgen dial failed: %v", err)
+        return
+    }
+
+    s.loadgenClient = coordpb.NewLoadgenControlClient(conn)
+    log.Printf("[COORD] connected to loadgen at %s", s.loadgenAddr)
+}
+
 // simple policy: every interval decide randomly how many active servers and set modes
-func (s *CoordinatorServer) runSimpleRandomPolicy(interval time.Duration, proxyAddrs []string) {
+func (s *CoordinatorServer) runSimpleRandomPolicy(interval time.Duration, proxyAddrs []string, kHotUtilThresh float64) {
 	// initialize servers map from provided proxyAddrs (format: serverID=host:port or host:port)
 	for _, a := range proxyAddrs {
 		a = strings.TrimSpace(a)
@@ -123,14 +153,37 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval time.Duration, proxyA
 			continue
 		}
 
-		// choose a random number of active servers between 1 and len(ids)
-		k := rand.Intn(len(ids)) + 1
-		// shuffle and pick first k
-		rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+		// // choose a random number of active servers between 1 and len(ids)
+		// k := rand.Intn(len(ids)) + 1
+		// // shuffle and pick first k
+		// rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+		totalCpu := float64(0)
+		for _, id := range ids {
+			s.mu.Lock()
+			totalCpu += s.servers[id].cpuUtil
+			s.mu.Unlock()
+		}
+		k := int(totalCpu/kHotUtilThresh) + 1 // target ~70% per active server
 		activeSet := map[string]bool{}
+		activeIndices := make([]int32, 0, k)
 		for i := 0; i < k; i++ {
 			activeSet[ids[i]] = true
+			activeIndices = append(activeIndices, int32(i))
 		}
+		// inform loadgen of active server indices
+		s.ensureLoadgenClient()
+
+		if s.loadgenClient != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, err := s.loadgenClient.UpdateActiveServers(ctx, &coordpb.UpdateActiveServersRequest{
+				ServerIndices: activeIndices,
+			})
+			cancel()
+			if err != nil {
+				log.Printf("[COORD] UpdateActiveServers failed: %v", err)
+			}
+		}
+
 
 		log.Printf("[COORD] policy: want %d active of %d total", k, len(ids))
 		// instruct each proxy
@@ -151,9 +204,12 @@ func main() {
 	port := flag.Int("port", 9060, "Coordinator listening port (for proxies NotifyState)")
 	proxyList := flag.String("proxies", "", "Comma-separated list of proxy control addresses. Format: serverID=host:port or host:port (serverID==addr).")
 	interval := flag.Int("interval", 10, "Policy interval seconds")
+	loadgenAddr := flag.String("loadgen", "", "Address of loadgen control server (host:port)")
+	kHotUtilThresh := flag.Float64("khot_util_thresh", 0.80, "CPU utilization threshold per active server for k-hot policy")
 	flag.Parse()
 
 	coord := NewCoordinatorServer()
+	coord.loadgenAddr = *loadgenAddr 
 
 	// parse proxies
 	proxyAddrs := []string{}
@@ -178,7 +234,7 @@ func main() {
 	}()
 
 	// start policy loop (random)
-	go coord.runSimpleRandomPolicy(time.Duration(*interval)*time.Second, proxyAddrs)
+	go coord.runSimpleRandomPolicy(time.Duration(*interval)*time.Second, proxyAddrs, *kHotUtilThresh)
 
 	// block forever
 	select {}

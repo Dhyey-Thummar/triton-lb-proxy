@@ -28,3 +28,6 @@
 
 # Model files (optional: large files)
 model_repository/
+
+# log files
+*.log
