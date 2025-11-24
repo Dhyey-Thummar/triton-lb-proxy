@@ -8,12 +8,13 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"net"
 
 	pb "triton-lb-proxy/proto"
 	coordpb "triton-lb-proxy/proto/coordpb"
@@ -22,59 +23,94 @@ import (
 )
 
 type LoadgenState struct {
-    allServers    []string
-    activeIndices atomic.Value // stores []int
-    rrCounter     uint64
+	allServers  []string
+	active      atomic.Value // stores []bool, length = len(allServers)
+	rrCounter   uint64
+	initServers int
 }
 
-func NewLoadgenState(servers []string) *LoadgenState {
-    st := &LoadgenState{allServers: servers}
-    st.activeIndices.Store([]int{}) // initially none
-    return st
+func NewLoadgenState(servers []string, initServers int) *LoadgenState {
+	st := &LoadgenState{allServers: servers, initServers: initServers}
+	st.active.Store(make([]bool, len(servers))) // all false initially
+	for i := 0; i < initServers && i < len(servers); i++ {
+		active := st.active.Load().([]bool)
+		active[i] = true
+		st.active.Store(active)
+	}
+	return st
 }
 
 func (st *LoadgenState) NextServer() string {
-    active := st.activeIndices.Load().([]int)
-    if len(active) == 0 {
-        // no active servers -> fallback to all servers
-        n := atomic.AddUint64(&st.rrCounter, 1)
-        return st.allServers[(n-1)%uint64(len(st.allServers))]
-    }
-    n := atomic.AddUint64(&st.rrCounter, 1)
-    idx := active[(n-1)%uint64(len(active))]
-    return st.allServers[idx]
+	active := st.active.Load().([]bool)
+
+	var activeList []int
+	for i, ok := range active {
+		if ok {
+			activeList = append(activeList, i)
+		}
+	}
+
+	n := atomic.AddUint64(&st.rrCounter, 1)
+
+	// if no active servers, fall back to initial servers
+	if len(activeList) == 0 {
+		idx := (n - 1) % uint64(st.initServers)
+		return st.allServers[idx]
+	}
+
+	idx := activeList[(n-1)%uint64(len(activeList))]
+	return st.allServers[idx]
 }
 
 type LoadgenControlServer struct {
-    state *LoadgenState
-    coordpb.UnimplementedLoadgenControlServer
+	state *LoadgenState
+	coordpb.UnimplementedLoadgenControlServer
 }
 
 func (s *LoadgenControlServer) UpdateActiveServers(
-    ctx context.Context,
-    req *coordpb.UpdateActiveServersRequest,
+	ctx context.Context,
+	req *coordpb.UpdateActiveServersRequest,
 ) (*coordpb.UpdateActiveServersResponse, error) {
 
-    // Convert to []int
-    inds := make([]int, len(req.ServerIndices))
-    for i, v := range req.ServerIndices {
-        inds[i] = int(v)
-    }
+	newActive := make([]bool, len(s.state.allServers))
+	// log.Printf("req active servers: %v", req.ServerActive)
+	// log.Printf("cur servers: %v", s.state.allServers)
+	for id, active := range req.ServerActive {
+		if !strings.HasPrefix(id, "proxy-") {
+			continue
+		}
+		num := id[6:]
+		idx, err := strconv.Atoi(num)
+		if err != nil || idx < 1 || idx > len(newActive) {
+			log.Printf("[LOADGEN] warning: ignoring invalid server ID %s", id)
+			continue
+		}
+		newActive[idx-1] = active
+	}
+	// log.Printf("new active servers: %v", newActive)
 
-    s.state.activeIndices.Store(inds)
+	s.state.active.Store(newActive)
 
-    log.Printf("[LOADGEN] updated active servers: %v", inds)
+	// log.Printf("[LOADGEN] updated active servers: %v", newActive)
+	countActive := 0
+	for _, v := range newActive {
+		if v {
+			countActive++
+		}
+	}
 
-    return &coordpb.UpdateActiveServersResponse{
-        Ok:      true,
-        Message: "active server list updated",
-    }, nil
+	total := len(newActive)
+	barWidth := 20 // width of the loading bar in characters
+	filled := int(float64(countActive) / float64(total) * float64(barWidth))
+
+	bar := "[" + strings.Repeat("█", filled) + strings.Repeat(" ", barWidth-filled) + "]"
+	log.Printf("[LOADGEN] active servers: %d/%d %s", countActive, total, bar)
+
+
+	return &coordpb.UpdateActiveServersResponse{Ok: true}, nil
 }
 
-
-//
 // ───────────────────────── Input Tensor ─────────────────────────
-//
 func makeRandomImage(batch int) [][]byte {
 	elems := batch * 3 * 224 * 224
 	buf := make([]byte, elems*4)
@@ -94,25 +130,24 @@ func makeRandomImage(batch int) [][]byte {
 //
 
 type ServerPool struct {
-    clients map[string]pb.GRPCInferenceServiceClient
+	clients map[string]pb.GRPCInferenceServiceClient
 }
 
 func newServerPool(urls []string) *ServerPool {
-    m := make(map[string]pb.GRPCInferenceServiceClient)
-    for _, u := range urls {
-        conn, err := grpc.Dial(u, grpc.WithInsecure())
-        if err != nil {
-            log.Fatalf("dial failed: %v", u)
-        }
-        m[u] = pb.NewGRPCInferenceServiceClient(conn)
-    }
-    return &ServerPool{clients: m}
+	m := make(map[string]pb.GRPCInferenceServiceClient)
+	for _, u := range urls {
+		conn, err := grpc.Dial(u, grpc.WithInsecure())
+		if err != nil {
+			log.Fatalf("dial failed: %v", u)
+		}
+		m[u] = pb.NewGRPCInferenceServiceClient(conn)
+	}
+	return &ServerPool{clients: m}
 }
 
 func (sp *ServerPool) ClientFor(addr string) pb.GRPCInferenceServiceClient {
-    return sp.clients[addr]
+	return sp.clients[addr]
 }
-
 
 //
 // ───────────────────────── Worker Pool ─────────────────────────
@@ -153,7 +188,6 @@ func (wp *WorkerPool) worker() {
 		serverAddr := wp.state.NextServer()
 		client := wp.pool.ClientFor(serverAddr)
 
-
 		req := &pb.ModelInferRequest{
 			ModelName:    wp.model,
 			ModelVersion: wp.version,
@@ -169,12 +203,14 @@ func (wp *WorkerPool) worker() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		start := time.Now()
 		_, err := client.ModelInfer(ctx, req)
+		wp.latCh <- time.Since(start)
 		cancel()
 
 		if err != nil {
 			log.Printf("infer error: %v", err)
+			log.Printf("server addr: %s", serverAddr)
 		} else {
-			wp.latCh <- time.Since(start)
+			
 		}
 	}
 }
@@ -221,50 +257,44 @@ func logLatency(latCh <-chan time.Duration) {
 //
 
 func Arrival(mode string, lambda float64) func() time.Duration {
-    switch mode {
-    case "constant":
-        interval := time.Duration((1.0 / lambda) * float64(time.Second))
-        return func() time.Duration {
-            return interval
-        }
+	switch mode {
+	case "constant":
+		interval := time.Duration((1.0 / lambda) * float64(time.Second))
+		return func() time.Duration {
+			return interval
+		}
 
-    case "poisson":
-        rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-        return func() time.Duration {
-            u := rng.Float64()
-            inter := -math.Log(1-u) / lambda
-            return time.Duration(inter * float64(time.Second))
-        }
+	case "poisson":
+		rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+		return func() time.Duration {
+			u := rng.Float64()
+			inter := -math.Log(1-u) / lambda
+			return time.Duration(inter * float64(time.Second))
+		}
 
-    case "point":
-        return func() time.Duration {
-            return 0
-        }
+	case "point":
+		return func() time.Duration {
+			return 0
+		}
 
-    default:
-        log.Fatalf("unknown mode: %s", mode)
-        return nil
-    }
+	default:
+		log.Fatalf("unknown mode: %s", mode)
+		return nil
+	}
 }
 
 //
 // ───────────────────────── Orchestrator ─────────────────────────
 //
 
-func runLoadgen(
-	mode string,
-	lambda float64,
-	sp *ServerPool,
-	wp *WorkerPool,
-) {
+func runLoadgen(mode string, lambda float64, _ *ServerPool) {
 
 	rpsLog, _ := os.Create("rps.log")
 	defer rpsLog.Close()
 
 	var next time.Time
-	var interGen func() time.Duration
 
-	interGen = Arrival(mode, lambda)
+	interGen := Arrival(mode, lambda)
 
 	count := 0
 	lastSec := time.Now()
@@ -316,6 +346,7 @@ func main() {
 	rps := flag.Float64("rps", 10, "Target requests per second")
 	batch := flag.Int("b", 1, "Batch size")
 	workers := flag.Int("w", 32, "Worker pool size")
+	initServers := flag.Int("init_servers", 3, "Initial number of servers")
 	flag.Parse()
 
 	urls := strings.Split(*urlsFlag, ",")
@@ -331,7 +362,7 @@ func main() {
 	go logLatency(latCh)
 
 	// 4. worker pool
-	state := NewLoadgenState(urls)
+	state := NewLoadgenState(urls, *initServers)
 	lis, _ := net.Listen("tcp", ":9050")
 	grpcServer := grpc.NewServer()
 	coordpb.RegisterLoadgenControlServer(grpcServer, &LoadgenControlServer{state: state, UnimplementedLoadgenControlServer: coordpb.UnimplementedLoadgenControlServer{}})
@@ -340,5 +371,6 @@ func main() {
 
 	// 5. run orchestrator
 	log.Printf("Loadgen → dist=%s rps=%.2f workers=%d servers=%d", *arrival, *rps, *workers, len(urls))
-	runLoadgen(*arrival, *rps, sp, wp)
+	var _ *WorkerPool = wp
+	runLoadgen(*arrival, *rps, sp)
 }

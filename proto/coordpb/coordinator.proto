@@ -20,6 +20,7 @@ message NotifyRequest {
   string desire = 2; // "WANT_ACTIVE" or "WANT_IDLE" or "ACTIVE" or "IDLE"
   double cpu_util = 3;
   int64 queue_len = 4;
+  string current_mode = 5; // "ACTIVE" or "IDLE"
 }
 message NotifyResponse {
   bool ok = 1;
@@ -28,7 +29,7 @@ message NotifyResponse {
 
 // Coordinator → Loadgen (pushes active server set)
 message UpdateActiveServersRequest {
-  repeated int32 server_indices = 1; // indices into the client's full server list
+  map<string, bool> server_active = 1;
 }
 
 message UpdateActiveServersResponse {

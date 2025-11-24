@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"sort"
+	"strconv"
+
 	// "math/rand"
 	"net"
 	"strings"
@@ -17,13 +20,25 @@ import (
 	coordpb "triton-lb-proxy/proto/coordpb"
 )
 
+const (
+	ModeActive = "ACTIVE"
+	ModeIdle   = "IDLE"
+
+	CollectFrequency = 200
+	KHotUtilThresh   = 0.80
+	MinServers       = 0
+)
+
 type serverInfo struct {
-	addr      string // "host:port" of proxy's control server
-	lastDesire string
-	lastSeen  time.Time
-	cid       string
-	cpuUtil   float64
-	queueLen  int64
+	addr            string // "host:port" of proxy's control server
+	desire          string
+	lastSeen        time.Time
+	cid             string
+	cpuUtil         float64
+	queueLen        int64
+	currentMode     string
+	pingsWantActive int
+	pingsWantIdle   int
 }
 
 type CoordinatorServer struct {
@@ -35,7 +50,7 @@ type CoordinatorServer struct {
 	// clients to proxies so we can call SetMode
 	proxyClients map[string]coordpb.ProxyControlClient
 
-	loadgenAddr string
+	loadgenAddr   string
 	loadgenClient coordpb.LoadgenControlClient
 }
 
@@ -57,11 +72,18 @@ func (s *CoordinatorServer) NotifyState(ctx context.Context, req *coordpb.Notify
 		srv = &serverInfo{addr: "", cid: req.ServerId}
 		s.servers[req.ServerId] = srv
 	}
-	srv.lastDesire = req.Desire
+	srv.desire = req.Desire
 	srv.lastSeen = time.Now()
 	srv.cpuUtil = req.CpuUtil
 	srv.queueLen = req.QueueLen
-	log.Printf("[COORD] NotifyState from %s desire=%s cpu=%.2f qlen=%d", req.ServerId, req.Desire, req.CpuUtil, req.QueueLen)
+	srv.currentMode = req.CurrentMode
+	switch req.Desire {
+	case ModeActive:
+		srv.pingsWantActive++
+	case ModeIdle:
+		srv.pingsWantIdle++
+	}
+	// log.Printf("[COORD] NotifyState from %s desire=%s cpu=%.2f qlen=%d", req.ServerId, req.Desire, req.CpuUtil, req.QueueLen)
 	return &coordpb.NotifyResponse{Ok: true, Message: "noted"}, nil
 }
 
@@ -92,30 +114,30 @@ func (s *CoordinatorServer) callSetMode(serverID, addr, mode string) {
 }
 
 func (s *CoordinatorServer) ensureLoadgenClient() {
-    if s.loadgenClient != nil {
-        return
-    }
-    if s.loadgenAddr == "" {
-        return
-    }
+	if s.loadgenClient != nil {
+		return
+	}
+	if s.loadgenAddr == "" {
+		return
+	}
 
-    conn, err := grpc.Dial(
-        s.loadgenAddr,
-        grpc.WithTransportCredentials(insecure.NewCredentials()),
-        grpc.WithBlock(),
-        grpc.WithTimeout(2*time.Second),
-    )
-    if err != nil {
-        log.Printf("[COORD] loadgen dial failed: %v", err)
-        return
-    }
+	conn, err := grpc.Dial(
+		s.loadgenAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+		grpc.WithTimeout(2*time.Second),
+	)
+	if err != nil {
+		log.Printf("[COORD] loadgen dial failed: %v", err)
+		return
+	}
 
-    s.loadgenClient = coordpb.NewLoadgenControlClient(conn)
-    log.Printf("[COORD] connected to loadgen at %s", s.loadgenAddr)
+	s.loadgenClient = coordpb.NewLoadgenControlClient(conn)
+	log.Printf("[COORD] connected to loadgen at %s", s.loadgenAddr)
 }
 
 // simple policy: every interval decide randomly how many active servers and set modes
-func (s *CoordinatorServer) runSimpleRandomPolicy(interval time.Duration, proxyAddrs []string, kHotUtilThresh float64) {
+func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []string, kHotUtilThresh float64) {
 	// initialize servers map from provided proxyAddrs (format: serverID=host:port or host:port)
 	for _, a := range proxyAddrs {
 		a = strings.TrimSpace(a)
@@ -134,67 +156,148 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval time.Duration, proxyA
 		}
 		s.servers[id] = &serverInfo{addr: addr, cid: id}
 	}
-	t := time.NewTicker(interval)
+
+	currentActive := 0
+	// activeReported := 0
+	// idleReported := 0
+	activeSet := make(map[string]bool, len(s.servers))
+	prevSet := make(map[string]bool, len(s.servers))
+	wantActiveSet := make(map[string]bool, len(s.servers))
+	wantIdleSet := make(map[string]bool, len(s.servers))
+	totalActivePings := 0
+	totalIdlePings := 0
+	uniqueActiveRequesters := 0
+	uniqueIdleRequesters := 0
+
+	t := time.NewTicker(time.Duration(interval) * time.Millisecond)
 	defer t.Stop()
 	for range t.C {
 		s.mu.Lock()
 		// collect server IDs and addresses for selection
 		var ids []string
+		currentActive = 0
+		// activeReported = 0
+		// idleReported = 0
+		totalActivePings = 0
+		totalIdlePings = 0
+		uniqueActiveRequesters = 0
+		uniqueIdleRequesters = 0
+
+		// for id, info := range s.servers {
+		// 	log.Printf("[COORD] Before Server %s addr=%s desire=%s mode=%s cpu=%.2f qlen=%d", id, info.addr, info.desire, info.currentMode, info.cpuUtil, info.queueLen)
+		// }
+
 		for id, info := range s.servers {
 			// only consider those with addresses
 			if info.addr != "" {
 				ids = append(ids, id)
 			}
+			wantActiveSet[id] = false
+			wantIdleSet[id] = false
+			activeSet[id] = false
+			prevSet[id] = false
+
+			totalActivePings += info.pingsWantActive
+			totalIdlePings += info.pingsWantIdle
+
+			if info.pingsWantActive > 0 {
+				uniqueActiveRequesters++
+				info.pingsWantActive = 0 // reset for next interval
+			}
+			if info.pingsWantIdle > 0 {
+				uniqueIdleRequesters++
+				info.pingsWantIdle = 0 // reset for next interval
+			}
+			// count current active servers
+			if info.currentMode == ModeActive {
+				currentActive++
+				prevSet[id] = true
+			}
+			// count reported active servers
+			switch info.desire {
+			case ModeActive:
+				wantActiveSet[id] = true
+			case ModeIdle:
+				wantIdleSet[id] = true
+			}
+
 		}
 		s.mu.Unlock()
+
+		sort.Slice(ids, func(i, j int) bool {
+			id1 := ids[i]
+			id2 := ids[j]
+			if strings.HasPrefix(id1, "proxy-") && strings.HasPrefix(id2, "proxy-") {
+				n1, _ := strconv.Atoi(id1[6:])
+				n2, _ := strconv.Atoi(id2[6:])
+				return n1 < n2
+			}
+			return id1 < id2
+		})
 
 		if len(ids) == 0 {
 			log.Printf("[COORD] no known proxy addresses to manage")
 			continue
 		}
 
-		// // choose a random number of active servers between 1 and len(ids)
-		// k := rand.Intn(len(ids)) + 1
-		// // shuffle and pick first k
-		// rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
-		totalCpu := float64(0)
-		for _, id := range ids {
-			s.mu.Lock()
-			totalCpu += s.servers[id].cpuUtil
-			s.mu.Unlock()
+		activeRequired := (uniqueActiveRequesters - uniqueIdleRequesters) + currentActive
+		if activeRequired < MinServers {
+			activeRequired = MinServers // <--- PREVENT 0 SERVERS
 		}
-		k := int(totalCpu/kHotUtilThresh) + 1 // target ~70% per active server
-		activeSet := map[string]bool{}
-		activeIndices := make([]int32, 0, k)
-		for i := 0; i < k; i++ {
+		if activeRequired > len(ids) {
+			activeRequired = len(ids)
+		}
+		for i := 0; i < activeRequired; i++ {
 			activeSet[ids[i]] = true
-			activeIndices = append(activeIndices, int32(i))
 		}
+		log.Printf("[COORD] Current active: %d, reported active: %d, reported idle: %d, desired active: %d", currentActive, uniqueActiveRequesters, uniqueIdleRequesters, activeRequired)
+		s.mu.Lock()
+		for id, info := range s.servers {
+			if activeSet[id] {
+				info.currentMode = ModeActive
+			} else {
+				info.currentMode = ModeIdle
+			}
+		}
+		s.mu.Unlock()
+
+		// // print active set
+		// log.Printf("current active: %d, reported active: %d, reported idle: %d, desired active: %d", currentActive, activeReported, idleReported, activeRequired)
+		// log.Printf("[COORD] Desired active set: %v", wantActiveSet)
+		// log.Printf("[COORD] Desired idle set: %v", wantIdleSet)
+		// log.Printf("[COORD] Active servers: %v", activeSet)
+		// log.Printf("[COORD] Previous active servers: %v", prevSet)
+		// s.mu.Lock()
+		// for id, info := range s.servers {
+		// 	log.Printf("[COORD] After Server %s addr=%s desire=%s mode=%s cpu=%.2f qlen=%d", id, info.addr, info.desire, info.currentMode, info.cpuUtil, info.queueLen)
+		// }
+		// s.mu.Unlock()
 		// inform loadgen of active server indices
 		s.ensureLoadgenClient()
 
 		if s.loadgenClient != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_, err := s.loadgenClient.UpdateActiveServers(ctx, &coordpb.UpdateActiveServersRequest{
-				ServerIndices: activeIndices,
+				ServerActive: activeSet,
 			})
 			cancel()
 			if err != nil {
 				log.Printf("[COORD] UpdateActiveServers failed: %v", err)
 			}
 		}
-
-
-		log.Printf("[COORD] policy: want %d active of %d total", k, len(ids))
 		// instruct each proxy
 		for _, id := range ids {
 			s.mu.Lock()
 			addr := s.servers[id].addr
 			s.mu.Unlock()
-			if activeSet[id] {
-				go s.callSetMode(id, addr, "ACTIVE")
-			} else {
-				go s.callSetMode(id, addr, "IDLE")
+			if activeSet[id] != prevSet[id] {
+				if activeSet[id] {
+					// log.Printf("[COORD] Instructing %s to ACTIVE", id)
+					s.callSetMode(id, addr, ModeActive)
+				} else {
+					// log.Printf("[COORD] Instructing %s to IDLE", id)
+					s.callSetMode(id, addr, ModeIdle)
+				}
 			}
 		}
 	}
@@ -203,13 +306,13 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval time.Duration, proxyA
 func main() {
 	port := flag.Int("port", 9060, "Coordinator listening port (for proxies NotifyState)")
 	proxyList := flag.String("proxies", "", "Comma-separated list of proxy control addresses. Format: serverID=host:port or host:port (serverID==addr).")
-	interval := flag.Int("interval", 10, "Policy interval seconds")
+	collectFrequency := flag.Int("interval", CollectFrequency, "Policy interval milliseconds")
 	loadgenAddr := flag.String("loadgen", "", "Address of loadgen control server (host:port)")
-	kHotUtilThresh := flag.Float64("khot_util_thresh", 0.80, "CPU utilization threshold per active server for k-hot policy")
+	kHotUtilThresh := flag.Float64("khot_util_thresh", KHotUtilThresh, "CPU utilization threshold per active server for k-hot policy")
 	flag.Parse()
 
 	coord := NewCoordinatorServer()
-	coord.loadgenAddr = *loadgenAddr 
+	coord.loadgenAddr = *loadgenAddr
 
 	// parse proxies
 	proxyAddrs := []string{}
@@ -234,7 +337,7 @@ func main() {
 	}()
 
 	// start policy loop (random)
-	go coord.runSimpleRandomPolicy(time.Duration(*interval)*time.Second, proxyAddrs, *kHotUtilThresh)
+	go coord.runSimpleRandomPolicy(*collectFrequency, proxyAddrs, *kHotUtilThresh)
 
 	// block forever
 	select {}

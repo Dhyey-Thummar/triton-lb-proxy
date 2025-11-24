@@ -28,6 +28,7 @@
 
 # Model files (optional: large files)
 model_repository/
+export.py
 
 # log files
 *.log
