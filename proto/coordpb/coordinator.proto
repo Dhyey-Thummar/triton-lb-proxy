@@ -6,8 +6,9 @@ option go_package = "triton-lb-proxy/proto/coordpb";
 
 // Messages for proxy control (coordinator -> proxy)
 message ModeRequest {
-  string mode = 1; // "ACTIVE" or "IDLE"
-  string coordinator_id = 2;
+  string mode = 1; // "ACTIVE" or "IDLE" or "FAILOVER"
+  string bounce_server_id = 2; // server to bounce to in case of FAILOVER
+  string coordinator_id = 3;
 }
 message ModeResponse {
   bool ok = 1;
@@ -17,10 +18,10 @@ message ModeResponse {
 // Messages for proxy -> coordinator notifications
 message NotifyRequest {
   string server_id = 1;
-  string desire = 2; // "WANT_ACTIVE" or "WANT_IDLE" or "ACTIVE" or "IDLE"
+  string desire = 2; // "ACTIVE" or "IDLE"
   double cpu_util = 3;
   int64 queue_len = 4;
-  string current_mode = 5; // "ACTIVE" or "IDLE"
+  string current_mode = 5; // "ACTIVE" or "IDLE" or "FAILOVER"
 }
 message NotifyResponse {
   bool ok = 1;

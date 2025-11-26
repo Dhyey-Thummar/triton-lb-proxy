@@ -25,18 +25,20 @@ import (
 const (
 	ModeActive         = "ACTIVE"
 	ModeIdle           = "IDLE"
-	CollectFrequency   = 50
-	ReportFrequency    = 50
+	ModeFailOver       = "FAILOVER"
+	CollectFrequency   = 10
+	ReportFrequency    = 200
 	QueuelenThresh     = 1
 	QueueHistoryLength = 10
-	QueueUpperBound    = 2
+	QueueUpperBound    = 0
 )
 
 type TritonMetricsTracker struct {
-	url          string
-	cpuUtil      atomic.Uint64
-	queueLen     atomic.Uint64
-	queueHistory []int64
+	url                 string
+	cpuUtil             atomic.Uint64
+	queueLen            atomic.Uint64
+	queueHistory        []int64
+	queueHistoryCounter atomic.Uint64
 }
 
 func newTritonMetricsTracker(metricsURL string, interval int) *TritonMetricsTracker {
@@ -68,10 +70,11 @@ func newTritonMetricsTracker(metricsURL string, interval int) *TritonMetricsTrac
 			resp.Body.Close()
 			t.cpuUtil.Store(uint64(cpuUtil * 10000))
 			t.queueLen.Store(uint64(queueLen))
-			t.queueHistory = append(t.queueHistory, int64(queueLen))
-			if len(t.queueHistory) > QueueHistoryLength {
-				t.queueHistory = t.queueHistory[1:]
-			}
+			// t.queueHistory = append(t.queueHistory, int64(queueLen))
+			// if len(t.queueHistory) > QueueHistoryLength {
+			// 	t.queueHistory = t.queueHistory[1:]
+			// }
+			t.queueHistoryCounter.Add(uint64(queueLen))
 			time.Sleep(time.Duration(interval) * time.Millisecond)
 		}
 	}()
@@ -124,12 +127,14 @@ type TritonLBProxy struct {
 	metrics *asyncMetrics
 
 	// round robin and mode
-	rrCounter uint32
+	// rrCounter uint32
 	mode      atomic.Value // stores string "ACTIVE" or "IDLE"
 
 	// coordinator client (to notify desire)
 	coordClient coordpb.CoordinatorClient
 	coordAddr   string
+
+	bounceServerID atomic.Value // stores string
 }
 
 func dialClient(addr string) (*grpc.ClientConn, error) {
@@ -156,14 +161,24 @@ func NewTritonLBProxy(serverID, localAddr string, idleAddrs []string, qlenThresh
 	}
 	localClient := pb.NewGRPCInferenceServiceClient(localConn)
 
-	idleClients := make([]pb.GRPCInferenceServiceClient, 0, len(idleAddrs))
-	for _, a := range idleAddrs {
-		c, err := dialClient(a)
-		if err != nil {
-			log.Printf("[%s] warning: dial idle %s failed: %v", serverID, a, err)
+	idleClients := make([]pb.GRPCInferenceServiceClient, len(idleAddrs))
+	for i, a := range idleAddrs {
+		if a == "" {
 			continue
 		}
-		idleClients = append(idleClients, pb.NewGRPCInferenceServiceClient(c))
+		// Use grpc.Dial directly without WithBlock for lazy connection
+		conn, err := grpc.Dial(a,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithDefaultCallOptions(
+				grpc.MaxCallRecvMsgSize(100*1024*1024),
+				grpc.MaxCallSendMsgSize(100*1024*1024),
+			),
+		)
+		if err != nil {
+			log.Printf("[%s] warning: could not create lazy client for %s: %v", serverID, a, err)
+			continue
+		}
+		idleClients[i] = pb.NewGRPCInferenceServiceClient(conn)
 	}
 
 	var coordClient coordpb.CoordinatorClient
@@ -184,7 +199,7 @@ func NewTritonLBProxy(serverID, localAddr string, idleAddrs []string, qlenThresh
 		coordClient: coordClient,
 		coordAddr:   coordAddr,
 	}
-	proxy.mode.Store(ModeIdle) // default active
+	proxy.mode.Store(ModeActive) // default active
 	return proxy, nil
 }
 
@@ -207,12 +222,23 @@ func (p *TritonLBProxy) ModelInfer(ctx context.Context, req *pb.ModelInferReques
 
 func (p *TritonLBProxy) BounceToIdle(ctx context.Context, req *pb.ModelInferRequest) (*pb.ModelInferResponse, error) {
 	n := len(p.idleClients)
-	if n == 0 {
-		return p.localClient.ModelInfer(ctx, req)
+	bounceId := p.bounceServerID.Load().(string)
+	var idx int
+	if bounceId != "" {
+		// try to parse bounceId like "proxy-3"
+		if strings.HasPrefix(bounceId, "proxy-") {
+			numStr := bounceId[6:]
+			num, err := strconv.Atoi(numStr)
+			if err == nil && num >= 1 && num <= n {
+				idx = num - 1
+			}
+		}
+	} else {
+		idx = -1
 	}
-	idx := int(atomic.AddUint32(&p.rrCounter, 1)-1) % n
 	cli := p.idleClients[idx]
 	p.metrics.incBounces()
+	// log.Printf("[%s] bouncing request to idle proxy-%d", p.serverID, idx+1)
 	resp, err := cli.ModelInfer(ctx, req)
 	return resp, err
 }
@@ -225,10 +251,11 @@ type ControlServer struct {
 
 func (s *ControlServer) SetMode(ctx context.Context, req *coordpb.ModeRequest) (*coordpb.ModeResponse, error) {
 	mode := strings.ToUpper(strings.TrimSpace(req.Mode))
-	if mode != ModeActive && mode != ModeIdle {
+	if mode != ModeActive && mode != ModeIdle && mode != ModeFailOver {
 		return &coordpb.ModeResponse{Ok: false, Message: "unknown mode"}, nil
 	}
 	s.proxy.mode.Store(mode)
+	s.proxy.bounceServerID.Store(req.BounceServerId)
 	log.Printf("[%s] SetMode -> %s (from coordinator=%s)", s.proxy.serverID, mode, req.CoordinatorId)
 	return &coordpb.ModeResponse{Ok: true, Message: "ok"}, nil
 }
@@ -258,7 +285,7 @@ func (p *TritonLBProxy) startDesireReporter(ctx context.Context, interval int) {
 		return
 	}
 	// make initial notify
-	p.makeNotifyRequest(p.serverID, p.mode.Load().(string), p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+	// p.makeNotifyRequest(p.serverID, p.mode.Load().(string), p.metrics.triton.Util(), p.metrics.triton.QueueLen())
 	go func() {
 		t := time.NewTicker(time.Duration(interval) * time.Millisecond)
 		defer t.Stop()
@@ -267,25 +294,22 @@ func (p *TritonLBProxy) startDesireReporter(ctx context.Context, interval int) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				desire := p.mode.Load().(string)
+				currMode := p.mode.Load().(string)
 				// log.Printf("Current mode=%s queue=%d", p.mode.Load().(string), p.metrics.triton.QueueLen())
-				switch desire {
+				switch currMode {
 				case ModeActive:
-					temp := 0
-					for _, qlen := range p.metrics.triton.queueHistory {
-						temp += int(qlen)
-					}
-					if temp == 0 {
+					if p.metrics.triton.queueHistoryCounter.Load() == 0 {
 						// if queue history is all zero, we want idle
 						p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
 					}
 				case ModeIdle:
-					queue := p.metrics.triton.QueueLen()
-					if queue > QueueUpperBound {
+					if p.metrics.triton.queueHistoryCounter.Load() > QueueUpperBound {
 						// if queue is high, we want active
-						p.makeNotifyRequest(p.serverID, ModeActive, p.metrics.triton.Util(), queue)
+						p.makeNotifyRequest(p.serverID, ModeActive, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
 					}
+				case ModeFailOver:
 				}
+				p.metrics.triton.queueHistoryCounter.Store(0)
 			}
 		}
 	}()
@@ -318,8 +342,8 @@ func main() {
 	port := flag.Int("port", 8050, "Proxy listening port (inference proxy)")
 	controlPort := flag.Int("control-port", 8051, "Control listening port (for coordinator SetMode)")
 	localTriton := flag.String("local-triton", "localhost:8001", "Local Triton gRPC address (host:port)")
-	idleProxiesStr := flag.String("idle-proxies", "", "Comma-separated idle proxy addresses host:port")
-	coordAddr := flag.String("coordinator", "", "Coordinator gRPC address (host:port) to notify")
+	idleProxiesStr := flag.String("idle-proxies", "10.10.0.1:8050,10.10.0.2:8050,10.10.0.3:8050,10.10.0.4:8050,10.10.0.5:8050,10.10.0.6:8050,10.10.0.7:8050,10.10.0.8:8050,10.10.0.9:8050,10.10.0.10:8050,", "Comma-separated idle proxy addresses host:port")
+	coordAddr := flag.String("coordinator", "10.10.0.11:9060", "Coordinator gRPC address (host:port) to notify")
 	qlenThresh := flag.Int64("qthresh", QueuelenThresh, "Queue length threshold to trigger bouncing")
 	collectFrequency := flag.Int("collect-freq", CollectFrequency, "Metrics collection frequency")
 	reportFrequency := flag.Int("report-freq", ReportFrequency, "Desire report frequency to coordinator")

@@ -23,19 +23,17 @@ import (
 )
 
 type LoadgenState struct {
-	allServers  []string
-	active      atomic.Value // stores []bool, length = len(allServers)
-	rrCounter   uint64
-	initServers int
+	allServers []string
+	active     atomic.Value // stores []bool, length = len(allServers)
+	rrCounter  uint64
 }
 
-func NewLoadgenState(servers []string, initServers int) *LoadgenState {
-	st := &LoadgenState{allServers: servers, initServers: initServers}
-	st.active.Store(make([]bool, len(servers))) // all false initially
-	for i := 0; i < initServers && i < len(servers); i++ {
-		active := st.active.Load().([]bool)
-		active[i] = true
-		st.active.Store(active)
+func NewLoadgenState(servers []string) *LoadgenState {
+	st := &LoadgenState{allServers: servers}
+	st.active.Store(make([]bool, len(servers)))
+	// initially mark first initServers as active
+	for i := 0; i < len(servers); i++ {
+		st.active.Load().([]bool)[i] = true
 	}
 	return st
 }
@@ -52,11 +50,11 @@ func (st *LoadgenState) NextServer() string {
 
 	n := atomic.AddUint64(&st.rrCounter, 1)
 
-	// if no active servers, fall back to initial servers
-	if len(activeList) == 0 {
-		idx := (n - 1) % uint64(st.initServers)
-		return st.allServers[idx]
-	}
+	// // if no active servers, fall back to initial servers
+	// if len(activeList) == 0 {
+	// 	idx := (n - 1) % uint64(st.initServers)
+	// 	return st.allServers[idx]
+	// }
 
 	idx := activeList[(n-1)%uint64(len(activeList))]
 	return st.allServers[idx]
@@ -105,7 +103,6 @@ func (s *LoadgenControlServer) UpdateActiveServers(
 
 	bar := "[" + strings.Repeat("█", filled) + strings.Repeat(" ", barWidth-filled) + "]"
 	log.Printf("[LOADGEN] active servers: %d/%d %s", countActive, total, bar)
-
 
 	return &coordpb.UpdateActiveServersResponse{Ok: true}, nil
 }
@@ -210,7 +207,7 @@ func (wp *WorkerPool) worker() {
 			log.Printf("infer error: %v", err)
 			log.Printf("server addr: %s", serverAddr)
 		} else {
-			
+
 		}
 	}
 }
@@ -346,7 +343,6 @@ func main() {
 	rps := flag.Float64("rps", 10, "Target requests per second")
 	batch := flag.Int("b", 1, "Batch size")
 	workers := flag.Int("w", 32, "Worker pool size")
-	initServers := flag.Int("init_servers", 3, "Initial number of servers")
 	flag.Parse()
 
 	urls := strings.Split(*urlsFlag, ",")
@@ -362,7 +358,7 @@ func main() {
 	go logLatency(latCh)
 
 	// 4. worker pool
-	state := NewLoadgenState(urls, *initServers)
+	state := NewLoadgenState(urls)
 	lis, _ := net.Listen("tcp", ":9050")
 	grpcServer := grpc.NewServer()
 	coordpb.RegisterLoadgenControlServer(grpcServer, &LoadgenControlServer{state: state, UnimplementedLoadgenControlServer: coordpb.UnimplementedLoadgenControlServer{}})

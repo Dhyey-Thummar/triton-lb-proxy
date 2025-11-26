@@ -23,11 +23,12 @@ const (
 
 // Messages for proxy control (coordinator -> proxy)
 type ModeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Mode          string                 `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"` // "ACTIVE" or "IDLE"
-	CoordinatorId string                 `protobuf:"bytes,2,opt,name=coordinator_id,json=coordinatorId,proto3" json:"coordinator_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Mode           string                 `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`                                             // "ACTIVE" or "IDLE" or "FAILOVER"
+	BounceServerId string                 `protobuf:"bytes,2,opt,name=bounce_server_id,json=bounceServerId,proto3" json:"bounce_server_id,omitempty"` // server to bounce to in case of FAILOVER
+	CoordinatorId  string                 `protobuf:"bytes,3,opt,name=coordinator_id,json=coordinatorId,proto3" json:"coordinator_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ModeRequest) Reset() {
@@ -63,6 +64,13 @@ func (*ModeRequest) Descriptor() ([]byte, []int) {
 func (x *ModeRequest) GetMode() string {
 	if x != nil {
 		return x.Mode
+	}
+	return ""
+}
+
+func (x *ModeRequest) GetBounceServerId() string {
+	if x != nil {
+		return x.BounceServerId
 	}
 	return ""
 }
@@ -130,10 +138,10 @@ func (x *ModeResponse) GetMessage() string {
 type NotifyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
-	Desire        string                 `protobuf:"bytes,2,opt,name=desire,proto3" json:"desire,omitempty"` // "WANT_ACTIVE" or "WANT_IDLE" or "ACTIVE" or "IDLE"
+	Desire        string                 `protobuf:"bytes,2,opt,name=desire,proto3" json:"desire,omitempty"` // "ACTIVE" or "IDLE"
 	CpuUtil       float64                `protobuf:"fixed64,3,opt,name=cpu_util,json=cpuUtil,proto3" json:"cpu_util,omitempty"`
 	QueueLen      int64                  `protobuf:"varint,4,opt,name=queue_len,json=queueLen,proto3" json:"queue_len,omitempty"`
-	CurrentMode   string                 `protobuf:"bytes,5,opt,name=current_mode,json=currentMode,proto3" json:"current_mode,omitempty"` // "ACTIVE" or "IDLE"
+	CurrentMode   string                 `protobuf:"bytes,5,opt,name=current_mode,json=currentMode,proto3" json:"current_mode,omitempty"` // "ACTIVE" or "IDLE" or "FAILOVER"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -356,10 +364,11 @@ var File_proto_coordpb_coordinator_proto protoreflect.FileDescriptor
 
 const file_proto_coordpb_coordinator_proto_rawDesc = "" +
 	"\n" +
-	"\x1fproto/coordpb/coordinator.proto\x12\acoordpb\"H\n" +
+	"\x1fproto/coordpb/coordinator.proto\x12\acoordpb\"r\n" +
 	"\vModeRequest\x12\x12\n" +
-	"\x04mode\x18\x01 \x01(\tR\x04mode\x12%\n" +
-	"\x0ecoordinator_id\x18\x02 \x01(\tR\rcoordinatorId\"8\n" +
+	"\x04mode\x18\x01 \x01(\tR\x04mode\x12(\n" +
+	"\x10bounce_server_id\x18\x02 \x01(\tR\x0ebounceServerId\x12%\n" +
+	"\x0ecoordinator_id\x18\x03 \x01(\tR\rcoordinatorId\"8\n" +
 	"\fModeResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x9f\x01\n" +
