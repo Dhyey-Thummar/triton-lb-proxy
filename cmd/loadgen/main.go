@@ -234,7 +234,7 @@ func logLatency(latCh <-chan time.Duration) {
 			if !ok {
 				return
 			}
-			buf = append(buf, fmt.Sprintf("%d\n", lat.Microseconds())...)
+			buf = append(buf, fmt.Sprintf("%d,%d\n", time.Now().Unix(), lat.Microseconds())...)
 			if len(buf) >= 8192 {
 				f.Write(buf)
 				buf = buf[:0]
@@ -252,6 +252,7 @@ func logLatency(latCh <-chan time.Duration) {
 //
 // ───────────────────────── Arrival Generators ─────────────────────────
 //
+var globalRNG = rand.New(rand.NewSource(0))
 
 func Arrival(mode string, lambda float64) func() time.Duration {
 	switch mode {
@@ -262,10 +263,9 @@ func Arrival(mode string, lambda float64) func() time.Duration {
 		}
 
 	case "poisson":
-		rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 		return func() time.Duration {
-			u := rng.Float64()
-			inter := -math.Log(1-u) / lambda
+			u := globalRNG.Float64()  // same as dist(gen)
+			inter := -math.Log(u) / lambda
 			return time.Duration(inter * float64(time.Second))
 		}
 
@@ -284,19 +284,41 @@ func Arrival(mode string, lambda float64) func() time.Duration {
 // ───────────────────────── Orchestrator ─────────────────────────
 //
 
-func runLoadgen(mode string, lambda float64, _ *ServerPool) {
+// func runLoadgen(mode string, lambda float64, _ *ServerPool) {
+func runLoadgen(mode string, lambda float64, useRange bool, start, end, step float64, intervalSec int) {
 
-	rpsLog, _ := os.Create("rps.log")
-	defer rpsLog.Close()
+    rpsLog, _ := os.Create("rps.log")
+    defer rpsLog.Close()
 
-	var next time.Time
+    var next time.Time
 
-	interGen := Arrival(mode, lambda)
+    currentLambda := lambda
+    if useRange {
+        currentLambda = start
+        log.Printf("[LOADGEN] RPS range mode: start=%.1f end=%.1f step=%.1f interval=%ds",
+            start, end, step, intervalSec)
+    }
 
-	count := 0
-	lastSec := time.Now()
+    interGen := Arrival(mode, currentLambda)
+    nextIncrease := time.Now().Add(time.Duration(intervalSec) * time.Second)
 
-	for {
+    count := 0
+    lastSec := time.Now()
+    lastSecPoint := time.Now()
+
+    for {
+        // --- Increment RPS ---
+        if useRange && time.Now().After(nextIncrease) {
+            currentLambda += step
+            if currentLambda > end {
+                currentLambda = end
+            }
+            log.Printf("[LOADGEN] increasing RPS to %.1f", currentLambda)
+
+            interGen = Arrival(mode, currentLambda)
+            nextIncrease = time.Now().Add(time.Duration(intervalSec) * time.Second)
+        }
+
 		switch mode {
 
 		case "constant", "poisson":
@@ -312,19 +334,19 @@ func runLoadgen(mode string, lambda float64, _ *ServerPool) {
 		case "point":
 			// fire all requests at start of each second
 			now := time.Now()
-			if now.Sub(lastSec) >= time.Second {
+			if time.Since(lastSecPoint) >= time.Second {
 				for i := 0; i < int(lambda); i++ {
 					requestQueue <- struct{}{}
 					count++
 				}
-				lastSec = now
+				lastSecPoint = now
 			}
 			time.Sleep(1 * time.Millisecond)
 		}
 
 		// log achieved RPS
 		if time.Since(lastSec) >= time.Second {
-			rpsLog.WriteString(fmt.Sprintf("%d\n", count))
+			rpsLog.WriteString(fmt.Sprintf("%d,%d\n", time.Now().Unix(), count))
 			count = 0
 			lastSec = time.Now()
 		}
@@ -343,7 +365,27 @@ func main() {
 	rps := flag.Float64("rps", 10, "Target requests per second")
 	batch := flag.Int("b", 1, "Batch size")
 	workers := flag.Int("w", 32, "Worker pool size")
+	rangeFlag := flag.String("range", "", "RPS range: start:end:step (e.g. 10:30:10)")
+	incInterval := flag.Int("interval", 10, "Seconds between RPS increases when using range")
+
 	flag.Parse()
+
+
+	var useRange bool
+	var start, end, step float64
+
+	if *rangeFlag != "" {
+		parts := strings.Split(*rangeFlag, ":")
+		if len(parts) != 3 {
+			log.Fatalf("invalid -range format, want start:end:step")
+		}
+		a, _ := strconv.ParseFloat(parts[0], 64)
+		b, _ := strconv.ParseFloat(parts[1], 64)
+		c, _ := strconv.ParseFloat(parts[2], 64)
+		start, end, step = a, b, c
+		useRange = true
+	}
+
 
 	urls := strings.Split(*urlsFlag, ",")
 
@@ -368,5 +410,5 @@ func main() {
 	// 5. run orchestrator
 	log.Printf("Loadgen → dist=%s rps=%.2f workers=%d servers=%d", *arrival, *rps, *workers, len(urls))
 	var _ *WorkerPool = wp
-	runLoadgen(*arrival, *rps, sp)
+	runLoadgen(*arrival, *rps, useRange, start, end, step, *incInterval)
 }

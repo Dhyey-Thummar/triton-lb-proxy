@@ -32,3 +32,6 @@ export.py
 
 # log files
 *.log
+
+# tar.gz
+*.tar.gz

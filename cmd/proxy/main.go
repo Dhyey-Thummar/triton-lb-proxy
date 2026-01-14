@@ -28,7 +28,7 @@ const (
 	ModeFailOver       = "FAILOVER"
 	CollectFrequency   = 10
 	ReportFrequency    = 200
-	QueuelenThresh     = 1
+	QueuelenThresh     = 2
 	QueueHistoryLength = 10
 	QueueUpperBound    = 0
 )
@@ -102,7 +102,7 @@ func newAsyncMetrics(metricsURL string, qlenThresh int64, collectFreq int) *asyn
 		qlenThresh: qlenThresh,
 	}
 	go func() {
-		t := time.NewTicker(5 * time.Second)
+		t := time.NewTicker(1 * time.Second)
 		defer t.Stop()
 		for range t.C {
 			log.Printf("[METRICS] cpu=%.2f%% qlen=%d active=%d total=%d bounces=%d",
@@ -200,6 +200,7 @@ func NewTritonLBProxy(serverID, localAddr string, idleAddrs []string, qlenThresh
 		coordAddr:   coordAddr,
 	}
 	proxy.mode.Store(ModeActive) // default active
+	proxy.bounceServerID.Store("")  // default no bounce ID
 	return proxy, nil
 }
 
@@ -234,7 +235,7 @@ func (p *TritonLBProxy) BounceToIdle(ctx context.Context, req *pb.ModelInferRequ
 			}
 		}
 	} else {
-		idx = -1
+		idx = 0
 	}
 	cli := p.idleClients[idx]
 	p.metrics.incBounces()
@@ -308,6 +309,12 @@ func (p *TritonLBProxy) startDesireReporter(ctx context.Context, interval int) {
 						p.makeNotifyRequest(p.serverID, ModeActive, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
 					}
 				case ModeFailOver:
+					// if p.metrics.triton.queueHistoryCounter.Load() == 0 {
+					// 	p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// }  
+					// if p.metrics.triton.queueHistoryCounter.Load() > QueueUpperBound {
+					// 	p.makeNotifyRequest(p.serverID, ModeActive, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// }
 				}
 				p.metrics.triton.queueHistoryCounter.Store(0)
 			}
@@ -343,6 +350,7 @@ func main() {
 	controlPort := flag.Int("control-port", 8051, "Control listening port (for coordinator SetMode)")
 	localTriton := flag.String("local-triton", "localhost:8001", "Local Triton gRPC address (host:port)")
 	idleProxiesStr := flag.String("idle-proxies", "10.10.0.1:8050,10.10.0.2:8050,10.10.0.3:8050,10.10.0.4:8050,10.10.0.5:8050,10.10.0.6:8050,10.10.0.7:8050,10.10.0.8:8050,10.10.0.9:8050,10.10.0.10:8050,", "Comma-separated idle proxy addresses host:port")
+	localModeFlag := flag.Bool("local-mode", false, "If true, use local decision making instead of coordinator")
 	coordAddr := flag.String("coordinator", "10.10.0.11:9060", "Coordinator gRPC address (host:port) to notify")
 	qlenThresh := flag.Int64("qthresh", QueuelenThresh, "Queue length threshold to trigger bouncing")
 	collectFrequency := flag.Int("collect-freq", CollectFrequency, "Metrics collection frequency")
@@ -354,6 +362,11 @@ func main() {
 		for _, p := range strings.Split(*idleProxiesStr, ",") {
 			idleProxies = append(idleProxies, strings.TrimSpace(p))
 		}
+	}
+	if *localModeFlag {
+		*coordAddr = ""
+		idleProxies = []string{"10.10.0.2:8001"}
+		log.Printf("[%s] local-mode enabled, not using coordinator, idle proxies: %v", *serverID, idleProxies)
 	}
 
 	proxy, err := NewTritonLBProxy(*serverID, *localTriton, idleProxies, *qlenThresh, *coordAddr, *collectFrequency)

@@ -229,8 +229,8 @@ func printHeapSorted(h interface{}) {
 // simple policy: every interval decide randomly how many active servers and set modes
 func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []string, kHotUtilThresh float64) {
 	// initial wait for proxies to register
-	log.Printf("[COORD] waiting 20s for proxies to register...")
-	time.Sleep(20*time.Second)
+	log.Printf("[COORD] waiting 10s for proxies to register...")
+	time.Sleep(10*time.Second)
 	var ids []string
 	for _, a := range proxyAddrs {
 		a = strings.TrimSpace(a)
@@ -354,8 +354,8 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []str
 				}
 				currentActive++
 				s.mu.Lock()
-				go s.callSetMode(srv.cid, srv.addr, ModeActive, failoverID)
-				go s.callSetMode(lastIdle.cid, lastIdle.addr, ModeIdle, lastIdle.cid)
+				go s.callSetMode(srv.cid, srv.addr, ModeActive, srv.bounceServerID)
+				go s.callSetMode(lastIdle.cid, lastIdle.addr, ModeIdle, lastIdle.bounceServerID)
 				s.mu.Unlock()
 			}
 		} else if activeRequired < currentActive {
@@ -367,15 +367,16 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []str
 				srv := heap.Pop(activeHeap).(*serverInfo)
 				srv.bounceServerID = srv.cid
 				activeSet[srv.cid] = false
-				heap.Push(idleHeap, srv)
+				
 				lastIdle := idleHeap.Peek().(*serverInfo)
 				if lastIdle != nil {
-					lastIdle.bounceServerID = srv.cid
+					lastIdle.bounceServerID = srv.bounceServerID
 				}
+				heap.Push(idleHeap, srv)
 				currentActive--
 				s.mu.Lock()
-				go s.callSetMode(srv.cid, srv.addr, ModeIdle, srv.cid)
-				go s.callSetMode(lastIdle.cid, lastIdle.addr, ModeIdle, srv.cid)
+				go s.callSetMode(srv.cid, srv.addr, ModeIdle, srv.bounceServerID)
+				go s.callSetMode(lastIdle.cid, lastIdle.addr, ModeIdle, lastIdle.bounceServerID)
 				s.mu.Unlock()
 			}
 		}

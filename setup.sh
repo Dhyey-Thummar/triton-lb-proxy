@@ -1,11 +1,6 @@
 #!/bin/bash
 set -e
 
-echo "=== Installing Protobuf Compiler ==="
-
-sudo apt-get update
-sudo apt-get install -y protobuf-compiler
-
 echo "=== Installing Go ==="
 
 # Detect OS and install Go if not present
@@ -24,8 +19,9 @@ if ! command -v go &> /dev/null; then
     sudo rm -rf /usr/local/go
     sudo tar -C /usr/local -xzf go${GO_VERSION}.${OS}-${ARCH}.tar.gz
     rm go${GO_VERSION}.${OS}-${ARCH}.tar.gz
-    echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.profile
-    echo "export PATH=$PATH:$HOME/go/bin" >> ~/.profile
+    printf 'export PATH="$PATH:/usr/local/go/bin"\n' >> ~/.profile
+    printf 'export GOPATH="$HOME/go"\n' >> ~/.profile
+    printf 'export PATH="$PATH:$GOPATH/bin"\n' >> ~/.profile
     source ~/.profile
 else
     echo "Go is already installed"
