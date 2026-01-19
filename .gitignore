@@ -35,3 +35,6 @@ export.py
 
 # tar.gz
 *.tar.gz
+
+# notes
+notes

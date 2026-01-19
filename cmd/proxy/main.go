@@ -30,7 +30,7 @@ const (
 	ReportFrequency    = 200
 	QueuelenThresh     = 2
 	QueueHistoryLength = 10
-	QueueUpperBound    = 0
+	QueueUpperBound    = 40
 )
 
 type TritonMetricsTracker struct {
@@ -258,6 +258,7 @@ func (s *ControlServer) SetMode(ctx context.Context, req *coordpb.ModeRequest) (
 	s.proxy.mode.Store(mode)
 	s.proxy.bounceServerID.Store(req.BounceServerId)
 	log.Printf("[%s] SetMode -> %s (from coordinator=%s)", s.proxy.serverID, mode, req.CoordinatorId)
+	log.Printf("[%s] bounceServerID -> %s", s.proxy.serverID, req.BounceServerId)
 	return &coordpb.ModeResponse{Ok: true, Message: "ok"}, nil
 }
 
@@ -285,6 +286,8 @@ func (p *TritonLBProxy) startDesireReporter(ctx context.Context, interval int) {
 		log.Printf("[%s] no coordinator client configured, skipping desire reporter", p.serverID)
 		return
 	}
+	tempCounter1 := 0
+	// tempCounter2 := 0
 	// make initial notify
 	// p.makeNotifyRequest(p.serverID, p.mode.Load().(string), p.metrics.triton.Util(), p.metrics.triton.QueueLen())
 	go func() {
@@ -301,7 +304,14 @@ func (p *TritonLBProxy) startDesireReporter(ctx context.Context, interval int) {
 				case ModeActive:
 					if p.metrics.triton.queueHistoryCounter.Load() == 0 {
 						// if queue history is all zero, we want idle
-						p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+						// p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+						if tempCounter1 < 3 {
+							tempCounter1++
+						} else {
+							p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+							tempCounter1 = 0
+						}
+						
 					}
 				case ModeIdle:
 					if p.metrics.triton.queueHistoryCounter.Load() > QueueUpperBound {
@@ -310,10 +320,22 @@ func (p *TritonLBProxy) startDesireReporter(ctx context.Context, interval int) {
 					}
 				case ModeFailOver:
 					// if p.metrics.triton.queueHistoryCounter.Load() == 0 {
-					// 	p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// 	// p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// 	if tempCounter1 < 3 {
+					// 		tempCounter1++
+					// 	} else {
+					// 		p.makeNotifyRequest(p.serverID, ModeIdle, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// 		tempCounter1 = 0
+					// 	}
 					// }  
 					// if p.metrics.triton.queueHistoryCounter.Load() > QueueUpperBound {
-					// 	p.makeNotifyRequest(p.serverID, ModeActive, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// 	// p.makeNotifyRequest(p.serverID, ModeActive, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// 	if tempCounter2 < 3 {
+					// 		tempCounter2++
+					// 	} else {
+					// 		p.makeNotifyRequest(p.serverID, ModeActive, p.metrics.triton.Util(), p.metrics.triton.QueueLen())
+					// 		tempCounter2 = 0
+					// 	}
 					// }
 				}
 				p.metrics.triton.queueHistoryCounter.Store(0)
@@ -421,11 +443,12 @@ func main() {
 			defer t.Stop()
 			for range t.C {
 				// naive local decision: if queue low -> active, else idle
-				if proxy.metrics.triton.QueueLen() > proxy.metrics.qlenThresh {
-					proxy.mode.Store(ModeIdle)
-				} else {
-					proxy.mode.Store(ModeActive)
-				}
+				// if proxy.metrics.triton.QueueLen() > proxy.metrics.qlenThresh {
+				// 	proxy.mode.Store(ModeIdle)
+				// } else {
+				// 	proxy.mode.Store(ModeActive)
+				// }
+				proxy.mode.Store(ModeActive)
 				log.Printf("[%s] local mode=%s (queue=%d)", *serverID, proxy.mode.Load().(string), proxy.metrics.triton.QueueLen())
 			}
 		}()

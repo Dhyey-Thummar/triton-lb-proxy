@@ -62,6 +62,7 @@ func (st *LoadgenState) NextServer() string {
 
 type LoadgenControlServer struct {
 	state *LoadgenState
+	nsCh  chan<- int
 	coordpb.UnimplementedLoadgenControlServer
 }
 
@@ -96,6 +97,7 @@ func (s *LoadgenControlServer) UpdateActiveServers(
 			countActive++
 		}
 	}
+	s.nsCh <- countActive
 
 	total := len(newActive)
 	barWidth := 20 // width of the loading bar in characters
@@ -234,7 +236,7 @@ func logLatency(latCh <-chan time.Duration) {
 			if !ok {
 				return
 			}
-			buf = append(buf, fmt.Sprintf("%d,%d\n", time.Now().Unix(), lat.Microseconds())...)
+			buf = append(buf, fmt.Sprintf("%d,%d\n", time.Now().UnixNano(), lat.Nanoseconds())...)
 			if len(buf) >= 8192 {
 				f.Write(buf)
 				buf = buf[:0]
@@ -244,6 +246,49 @@ func logLatency(latCh <-chan time.Duration) {
 			if len(buf) > 0 {
 				f.Write(buf)
 				buf = buf[:0]
+			}
+		}
+	}
+}
+
+func logNumServers(ch <-chan int) {
+	f, err := os.Create("num_servers.log")
+	if err != nil {
+		log.Fatalf("failed num_servers.log: %v", err)
+	}
+	defer f.Close()
+
+	var buf strings.Builder
+	// Flush to disk every 100ms
+	ticker := time.NewTicker(100 * time.Millisecond)
+	
+	// Flush threshold (write early if we have too much data in RAM)
+	const maxBufferBytes = 16 * 1024 // 16KB
+
+	for {
+		select {
+		case n, ok := <-ch:
+			if !ok {
+				// Channel closed, flush remaining data and exit
+				if buf.Len() > 0 {
+					f.WriteString(buf.String())
+				}
+				return
+			}
+			// Append to memory buffer
+			fmt.Fprintf(&buf, "%d,%d\n", time.Now().UnixNano(), n)
+
+			// Safety flush if buffer gets too big before the ticker fires
+			if buf.Len() >= maxBufferBytes {
+				f.WriteString(buf.String())
+				buf.Reset()
+			}
+
+		case <-ticker.C:
+			// Time to write to disk
+			if buf.Len() > 0 {
+				f.WriteString(buf.String())
+				buf.Reset()
 			}
 		}
 	}
@@ -346,7 +391,7 @@ func runLoadgen(mode string, lambda float64, useRange bool, start, end, step flo
 
 		// log achieved RPS
 		if time.Since(lastSec) >= time.Second {
-			rpsLog.WriteString(fmt.Sprintf("%d,%d\n", time.Now().Unix(), count))
+			rpsLog.WriteString(fmt.Sprintf("%d,%d\n", time.Now().UnixNano(), count))
 			count = 0
 			lastSec = time.Now()
 		}
@@ -398,12 +443,15 @@ func main() {
 	// 3. latency logger
 	latCh := make(chan time.Duration, 100000)
 	go logLatency(latCh)
+	nsCh := make(chan int, 10000) 
+	go logNumServers(nsCh)
+	nsCh <- len(urls) // Log initial state
 
 	// 4. worker pool
 	state := NewLoadgenState(urls)
 	lis, _ := net.Listen("tcp", ":9050")
 	grpcServer := grpc.NewServer()
-	coordpb.RegisterLoadgenControlServer(grpcServer, &LoadgenControlServer{state: state, UnimplementedLoadgenControlServer: coordpb.UnimplementedLoadgenControlServer{}})
+	coordpb.RegisterLoadgenControlServer(grpcServer, &LoadgenControlServer{state: state, UnimplementedLoadgenControlServer: coordpb.UnimplementedLoadgenControlServer{}, nsCh: nsCh})
 	go grpcServer.Serve(lis)
 	wp := newWorkerPool(*workers, sp, *model, *version, *batch, input, latCh, state)
 

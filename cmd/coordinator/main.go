@@ -189,7 +189,7 @@ func (s *CoordinatorServer) ensureLoadgenClient() {
 		s.loadgenAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
-		grpc.WithTimeout(2*time.Second),
+		grpc.WithTimeout(1*time.Second),
 	)
 	if err != nil {
 		log.Printf("[COORD] loadgen dial failed: %v", err)
@@ -220,7 +220,8 @@ func printHeapSorted(h interface{}) {
     if ch, ok := copyHeap.(heap.Interface); ok {
         for ch.Len() > 0 {
             item := heap.Pop(ch).(*serverInfo)
-            fmt.Print(item.cid + " ")
+			fmt.Print(item.cid + " ")
+            // fmt.Print(item.cid + " bounceTo:" + item.bounceServerID + "... ")
         }
     }
     fmt.Println()
@@ -340,6 +341,7 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []str
 		if activeRequired > currentActive {
 			// need to activate more servers
 			toActivate := activeRequired - currentActive
+			// toActivate := 1
 			for range toActivate {
 				if idleHeap.Len() == 0 {
 					break
@@ -351,6 +353,9 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []str
 				lastIdle := idleHeap.Peek().(*serverInfo)
 				if lastIdle != nil {
 					lastIdle.bounceServerID = lastIdle.cid
+				} else {
+					fmt.Println("No idle servers --- should not happen")
+					return
 				}
 				currentActive++
 				s.mu.Lock()
@@ -359,7 +364,8 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []str
 				s.mu.Unlock()
 			}
 		} else if activeRequired < currentActive {
-			toIdle := currentActive - activeRequired
+			// toIdle := currentActive - activeRequired
+			toIdle := 1
 			for range toIdle {
 				if activeHeap.Len() == 0 {
 					break
@@ -371,7 +377,10 @@ func (s *CoordinatorServer) runSimpleRandomPolicy(interval int, proxyAddrs []str
 				lastIdle := idleHeap.Peek().(*serverInfo)
 				if lastIdle != nil {
 					lastIdle.bounceServerID = srv.bounceServerID
-				}
+				} else {
+					fmt.Println("No idle servers --- should not happen")
+					return
+				}	
 				heap.Push(idleHeap, srv)
 				currentActive--
 				s.mu.Lock()
